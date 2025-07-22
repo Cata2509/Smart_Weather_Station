@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <title>Stația Meteo Inteligentă</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h1>Contribuții privind monitorizarea parametrilor de mediu</h1>
+
+    <div class="flex-container">
+        <!-- Informații în timp real -->
+        <div class="container" style="flex: 1;">
+            <h3>Informații în timp real</h3>
+            <p>Umiditate: <span id="humidity"></span> %<span id="alert_humidity" class="alert-icon"></span></p>
+            <p>Temperatură: <span id="temperature"></span> °C<span id="alert_temp" class="alert-icon"></span></p>
+            <p>Valoare UV: <span id="uvValue"></span></p>
+            <p>Status Ploaie: <span id="rainStatus"></span></p>
+            <p>Valoare Analogică Ploaie: <span id="rainAnalogValue"></span></p>
+            <p>Luminozitate: <span id="lightLevel"></span> lx</p>
+            <p>Presiune: <span id="pressure"></span> hPa</p>
+        </div>
+
+        <!-- Prognoza -->
+        <div class="container" style="flex: 1;">
+            <h3>Prognoza</h3>
+            <p>Temperatură estimată: <span id="predicted_temp">–</span> °C</p>
+            <p>Clasificare termică: <span id="weather_class">–</span></p>
+            <p>Clasificare atmosferică: <span id="weather_type">–</span></p>
+            <hr>
+            <h4>Exportă date CSV</h4>
+            <form id="export-form" method="POST" action="/export_csv">
+                <label for="start_date">De la:</label>
+                <input type="date" name="start_date" required>
+
+                <label for="end_date">Până la:</label>
+                <input type="date" name="end_date" required>
+
+                <br><br>
+                <button type="submit">Exportă date CSV</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Grafice -->
+    <div class="chart-container">
+        <div class="chart-item">
+            <canvas id="humidityChart"></canvas>
+        </div>
+        <div class="chart-item">
+            <canvas id="temperatureChart"></canvas>
+        </div>
+        <div class="chart-item">
+            <canvas id="uvChart"></canvas>
+        </div>
+        <div class="chart-item">
+            <canvas id="pressureChart"></canvas>
+        </div>
+        <div class="chart-item">
+            <canvas id="lightChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        async function fetchData() {
+            try {
+                const response = await fetch("/get_latest_data");
+                const data = await response.json();
+
+                if (data) {
+                    document.getElementById("humidity").textContent = data.humidity;
+                    // === ALERTĂ pentru umiditate scăzută sau foarte ridicată ===
+                    if (data.humidity < 20 || data.humidity > 65) {
+                        document.getElementById("alert_humidity").textContent = "⚠️";
+                        document.getElementById("humidity").style.backgroundColor = "#e63946"; // galben pal
+                        document.getElementById("humidity").style.padding = "2px 6px";
+                        document.getElementById("humidity").style.borderRadius = "5px";
+                    } else {
+                        document.getElementById("alert_humidity").textContent = "";
+                        document.getElementById("humidity").style.backgroundColor = "";
+                        document.getElementById("humidity").style.padding = "";
+                        document.getElementById("humidity").style.borderRadius = "";
+                    }
+                    document.getElementById("temperature").textContent = data.temperature;
+                    // === ALERTĂ pentru temperatură ridicată ===
+                    if (data.temperature > 32) {
+                        document.getElementById("alert_temp").textContent = "⚠️";
+                        document.getElementById("temperature").style.backgroundColor = "#ffcccc"; // roșu deschis
+                        document.getElementById("temperature").style.padding = "2px 6px";
+                        document.getElementById("temperature").style.borderRadius = "5px";
+                    } else {
+                        document.getElementById("alert_temp").textContent = "";
+                        document.getElementById("temperature").style.backgroundColor = "";
+                        document.getElementById("temperature").style.padding = "";
+                        document.getElementById("temperature").style.borderRadius = "";
+                    }
+                    document.getElementById("uvValue").textContent = data.uvValue;
+                    document.getElementById("rainStatus").textContent = data.rainStatus;
+                    document.getElementById("rainAnalogValue").textContent = data.rainAnalogValue;
+                    document.getElementById("lightLevel").textContent = data.lightLevel;
+                    document.getElementById("pressure").textContent = data.pressure;
+
+                    updateCharts(
+                        data.humidity,
+                        data.temperature,
+                        data.uvValue,
+                        data.pressure,
+                        data.lightLevel
+                    );
+                }
+            } catch (error) {
+                console.error("Eroare la preluarea datelor:", error);
+            }
+        }
+
+        async function fetchAIInsights() {
+            try {
+                const response = await fetch("/ai_insights");
+                const data = await response.json();
+
+                if (data) {
+                    document.getElementById("predicted_temp").textContent = data.predicted_temp ?? "–";
+                    document.getElementById("weather_class").textContent = data.weather_class ?? "–";
+                    document.getElementById("weather_type").textContent = data.weather_type ?? "–";
+                }
+            } catch (error) {
+                console.error("Eroare la preluarea datelor AI:", error);
+            }
+        }
+
+        const ctxHumidity = document.getElementById('humidityChart').getContext('2d');
+        const ctxTemperature = document.getElementById('temperatureChart').getContext('2d');
+        const ctxUV = document.getElementById('uvChart').getContext('2d');
+        const ctxPressure = document.getElementById('pressureChart').getContext('2d');
+        const ctxLight = document.getElementById('lightChart').getContext('2d');
+
+        const humidityChart = new Chart(ctxHumidity, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Umiditate (%)',
+                    data: [],
+                    borderColor: 'blue',
+                    borderWidth: 1,
+                    fill: false
+                }]
+            },
+            options: { scales: { x: { beginAtZero: true }, y: { beginAtZero: true } } }
+        });
+
+        const temperatureChart = new Chart(ctxTemperature, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Temperatură (°C)',
+                    data: [],
+                    borderColor: 'red',
+                    borderWidth: 1,
+                    fill: false
+                }]
+            },
+            options: { scales: { x: { beginAtZero: true }, y: { beginAtZero: true } } }
+        });
+
+        const uvChart = new Chart(ctxUV, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets:[{
+                    label: 'Valoare UV',
+                    data: [],
+                    borderColor: 'purple',
+                    borderWidth: 1,
+                    fill: false
+                }]
+            },
+            options: { scales: { x: { beginAtZero: true }, y: { beginAtZero: true } } }
+        });
+
+        const pressureChart = new Chart(ctxPressure, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets:[{
+                    label: 'Presiune (hPa)',
+                    data: [],
+                    borderColor: 'orange',
+                    borderWidth: 1,
+                    fill: false
+                }]
+            },
+            options: { scales: { x: { beginAtZero: true }, y: { beginAtZero: true } } }
+        });
+
+        const lightChart = new Chart(ctxLight, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets:[{
+                    label: 'Luminozitate (lx)',
+                    data: [],
+                    borderColor: 'gold',
+                    borderWidth: 1,
+                    fill: false
+                }]
+            },
+            options: { scales: { x: { beginAtZero: true }, y: { beginAtZero: true } } }
+        });
+
+        function updateCharts(humidity, temperature, uvValue, pressure, lightLevel) {
+            const currentTime = new Date().toLocaleTimeString();
+
+            humidityChart.data.labels.push(currentTime);
+            humidityChart.data.datasets[0].data.push(humidity);
+            if (humidityChart.data.labels.length > 10) {
+                humidityChart.data.labels.shift();
+                humidityChart.data.datasets[0].data.shift();
+            }
+            humidityChart.update();
+
+            temperatureChart.data.labels.push(currentTime);
+            temperatureChart.data.datasets[0].data.push(temperature);
+            if (temperatureChart.data.labels.length > 10) {
+                temperatureChart.data.labels.shift();
+                temperatureChart.data.datasets[0].data.shift();
+            }
+            temperatureChart.update();
+
+            uvChart.data.labels.push(currentTime);
+            uvChart.data.datasets[0].data.push(uvValue);
+            if (uvChart.data.labels.length > 10) {
+                uvChart.data.labels.shift();
+                uvChart.data.datasets[0].data.shift();
+            }
+            uvChart.update();
+
+            pressureChart.data.labels.push(currentTime);
+            pressureChart.data.datasets[0].data.push(pressure);
+            if (pressureChart.data.labels.length > 10) {
+                pressureChart.data.labels.shift();
+                pressureChart.data.datasets[0].data.shift();
+            }
+            pressureChart.update();
+
+            lightChart.data.labels.push(currentTime);
+            lightChart.data.datasets[0].data.push(lightLevel);
+            if (lightChart.data.labels.length > 10) {
+                lightChart.data.labels.shift();
+                lightChart.data.datasets[0].data.shift();
+            }
+            lightChart.update();
+        }
+
+        setInterval(fetchData, 7000);
+        setInterval(fetchAIInsights, 15000);
+        fetchData();
+        fetchAIInsights();
+    </script>
+</body>
+</html>
